@@ -7,6 +7,8 @@ interface BluetoothController {
     val devices: Flow<List<BluetoothDevice>>
     val selectedDevice: Flow<BluetoothDevice?>
 
+    val error: Flow<String?>
+
     fun connectDevices(addresses: List<String>)
     fun changeSelectedDevice(address: String)
 

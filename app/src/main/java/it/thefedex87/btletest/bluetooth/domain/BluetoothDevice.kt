@@ -2,7 +2,6 @@ package it.thefedex87.btletest.bluetooth.domain
 
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattService
-import kotlinx.coroutines.flow.Flow
 
 typealias BluetoothDeviceDomain = BluetoothDevice
 
@@ -18,6 +17,7 @@ data class BluetoothComponents(
 )
 
 data class DeviceState(
+    val connectionRequested: Boolean = false,
     val isConnecting: Boolean = false,
     val isConnected: Boolean = false,
 

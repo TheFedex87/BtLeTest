@@ -1,10 +1,14 @@
 package it.thefedex87.btletest.bluetooth.presentation
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.Button
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.CircularProgressIndicator
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,5 +23,25 @@ fun DevicesScreen(
                 modifier = Modifier.align(Alignment.Center)
             )
         }
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            items(state.devices) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = it.name ?: "No Name")
+                    if (it.isConnecting) {
+                        CircularProgressIndicator()
+                    } else {
+                        if (it.isConnected) {
+                            Icon(imageVector = Icons.Default.Done, contentDescription = null)
+                        } else {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = null)
+                        }
+                    }
+                }
+            }
+        }
+
     }
 }
