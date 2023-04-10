@@ -5,6 +5,6 @@ import it.thefedex87.btletest.bluetooth.domain.DeviceState
 
 data class DevicesUiState(
     val isLoading: Boolean = false,
-    val devices: List<DeviceState> = emptyList(),
-    val selectedDeviceInfo: DeviceState? = null
+    val devices: List<BluetoothDeviceUiModel> = emptyList(),
+    val selectedDeviceInfo: BluetoothDeviceUiModel? = null
 )

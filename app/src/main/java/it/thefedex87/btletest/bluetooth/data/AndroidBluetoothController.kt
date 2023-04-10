@@ -2,26 +2,23 @@ package it.thefedex87.btletest.bluetooth.data
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.bluetooth.BluetoothGatt
+import android.bluetooth.*
 import android.bluetooth.BluetoothGatt.GATT_SUCCESS
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
-import it.thefedex87.btletest.bluetooth.domain.BluetoothComponents
-import it.thefedex87.btletest.bluetooth.domain.BluetoothController
+import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
-import it.thefedex87.btletest.bluetooth.domain.DeviceState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.*
 
 class AndroidBluetoothController(
     private val context: Context
@@ -45,6 +42,10 @@ class AndroidBluetoothController(
     private val _selectedDeviceState = MutableStateFlow<BluetoothDevice?>(null)
     override val selectedDevice: Flow<BluetoothDevice?>
         get() = _selectedDeviceState.asStateFlow()
+
+    private val _bleStateResult = MutableSharedFlow<BleStateResult>()
+    override val bleStateResult: Flow<BleStateResult>
+        get() = _bleStateResult.asSharedFlow()
 
     override fun changeSelectedDevice(address: String) {
         _selectedDeviceState.update {
@@ -91,6 +92,62 @@ class AndroidBluetoothController(
     }
 
     @SuppressLint("MissingPermission")
+    override fun writeCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String,
+        value: String
+    ) {
+        val service = _devices.value.first { it.address == address }
+        service.bluetoothComponents.services?.first { service ->
+            service.uuid?.toString() == serviceId
+        }?.characteristics?.first { characteristic ->
+            characteristic.uuid?.toString() == characteristicId
+        }?.apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                service.bluetoothComponents.gatt?.writeCharacteristic(
+                    this,
+                    value.toByteArray(Charsets.US_ASCII),
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                )
+            } else {
+                writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                this.value = value.toByteArray(Charsets.US_ASCII)
+                service.bluetoothComponents.gatt?.writeCharacteristic(
+                    this
+                )
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun registerToCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String,
+        descriptorId: String
+    ) {
+        val service = _devices.value.first { it.address == address }
+        service.bluetoothComponents.services?.first { service ->
+            service.uuid?.toString() == serviceId
+        }?.characteristics?.first { characteristic ->
+            characteristic.uuid?.toString() == characteristicId
+        }?.apply {
+            service.bluetoothComponents.gatt?.setCharacteristicNotification(this, true)
+            this.getDescriptor(UUID.fromString(descriptorId))?.let { descriptor ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    service.bluetoothComponents.gatt?.writeDescriptor(
+                        descriptor,
+                        BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    )
+                } else {
+                    value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                }
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     override fun cleanup() {
         _devices.value.forEach { device ->
             device.bluetoothComponents.gatt?.disconnect()
@@ -103,30 +160,31 @@ class AndroidBluetoothController(
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
 
-            _devices.value.find { it.address == result?.device?.address && !it.deviceState.connectionRequested }?.let { device ->
-                val deviceIndex = _devices.value.indexOf(device)
-                val updatedDevice = device.copy(
-                    deviceState = device.deviceState.copy(
-                        connectionRequested = true
+            _devices.value.find { it.address == result?.device?.address && !it.deviceState.connectionRequested }
+                ?.let { device ->
+                    val deviceIndex = _devices.value.indexOf(device)
+                    val updatedDevice = device.copy(
+                        deviceState = device.deviceState.copy(
+                            connectionRequested = true
+                        )
                     )
-                )
 
-                _devices.update {devices ->
-                    devices.map { device ->
-                        if(devices.indexOf(device) == deviceIndex) {
-                            updatedDevice
-                        } else {
-                            device
+                    _devices.update { devices ->
+                        devices.map { device ->
+                            if (devices.indexOf(device) == deviceIndex) {
+                                updatedDevice
+                            } else {
+                                device
+                            }
                         }
                     }
-                }
 
-                result?.device?.connectGatt(
-                    context,
-                    true,
-                    gattCallback
-                )
-            }
+                    result?.device?.connectGatt(
+                        context,
+                        true,
+                        gattCallback
+                    )
+                }
         }
     }
 
@@ -180,9 +238,9 @@ class AndroidBluetoothController(
                 }
 
                 Log.d("BLE_TEST", "DS: ${device.deviceState}")
-                _devices.update {devices ->
+                _devices.update { devices ->
                     devices.map { device ->
-                        if(devices.indexOf(device) == deviceIndex) {
+                        if (devices.indexOf(device) == deviceIndex) {
                             updatedDevice
                         } else {
                             device
@@ -198,7 +256,44 @@ class AndroidBluetoothController(
                     services = gatt?.services
                 )
             }
+            controllerScope.launch {
+                _bleStateResult.emit(BleStateResult.ServicesDiscovered(gatt!!.device!!.address))
+            }
             super.onServicesDiscovered(gatt, status)
+        }
+
+        override fun onCharacteristicWrite(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicWrite(gatt, characteristic, status)
+            controllerScope.launch {
+                _bleStateResult.emit(
+                    BleStateResult.CharacteristicWrote(
+                        gatt!!.device!!.address,
+                        characteristic!!.uuid!!.toString()
+                    )
+                )
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic, value)
+            controllerScope.launch {
+                _bleStateResult.emit(
+                    BleStateResult.CharacteristicNotified(
+                        address = gatt.device!!.address,
+                        serviceId = characteristic.service.uuid.toString(),
+                        characteristicId = characteristic.uuid.toString(),
+                        value = value.toString(Charsets.UTF_8)
+                    )
+                )
+            }
         }
     }
 
