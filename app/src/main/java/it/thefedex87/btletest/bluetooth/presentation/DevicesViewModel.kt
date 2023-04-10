@@ -20,20 +20,18 @@ class DevicesViewModel @Inject constructor(
         bluetoothController.isScanning,
         bluetoothController.devices
     ) { state, selectedDevice, isScanning, devices ->
-        _state.update {
-            state.copy(
-                isLoading = isScanning,
-                devices = devices.map { device ->
-                    BluetoothDeviceUiModel(
-                        address = device.address,
-                        name = device.deviceState.name,
-                        isConnecting = device.deviceState.isConnecting,
-                        isConnected = device.deviceState.isConnected,
-                        batteryLevel = _state.value.devices.first { it.address == device.address }.batteryLevel
-                    )
-                }
-            )
-        }
+        state.copy(
+            isLoading = isScanning,
+            devices = devices.map { device ->
+                BluetoothDeviceUiModel(
+                    address = device.address,
+                    name = device.deviceState.name,
+                    isConnecting = device.deviceState.isConnecting,
+                    isConnected = device.deviceState.isConnected,
+                    batteryLevel = state.devices.firstOrNull { it.address == device.address }?.batteryLevel
+                )
+            }
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), _state.value)
 
 
@@ -47,10 +45,11 @@ class DevicesViewModel @Inject constructor(
                         address = it.address,
                         serviceId = "00003ab2-0000-1000-8000-00805f9b34fb",
                         characteristicId = "00001001-0000-1000-8000-00805f9b34fb",
-                        value = "access_token"
+                        value = "abaad486d1884ac8"
                     )
                 }
                 is BleStateResult.CharacteristicNotified -> {
+                    val f = 4
                     val deviceToUpdate =
                         _state.value.devices.first { device -> device.address == it.address }
                             .copy(
@@ -80,7 +79,7 @@ class DevicesViewModel @Inject constructor(
                 }
             }
 
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+        }.launchIn(viewModelScope)
 
         bluetoothController.connectDevices(
             listOf(

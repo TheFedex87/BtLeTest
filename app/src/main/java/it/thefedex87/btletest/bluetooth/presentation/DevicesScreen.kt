@@ -26,15 +26,16 @@ fun DevicesScreen(
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(state.devices) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(text = it.name ?: "No Name")
+                    Spacer(modifier = Modifier.weight(1f))
                     if (it.isConnecting) {
                         CircularProgressIndicator()
                     } else {
                         if (it.isConnected) {
                             Icon(imageVector = Icons.Default.Done, contentDescription = null)
+                            Text(text = it.batteryLevel?.toString() ?: "")
                         } else {
                             Icon(imageVector = Icons.Default.Delete, contentDescription = null)
                         }

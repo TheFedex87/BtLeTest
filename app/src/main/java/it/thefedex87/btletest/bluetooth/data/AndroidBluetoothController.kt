@@ -13,6 +13,7 @@ import android.os.Build
 import android.util.Log
 import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
+import it.thefedex87.btletest.utils.toHexString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -127,21 +128,22 @@ class AndroidBluetoothController(
         characteristicId: String,
         descriptorId: String
     ) {
-        val service = _devices.value.first { it.address == address }
-        service.bluetoothComponents.services?.first { service ->
+        val device = _devices.value.first { it.address == address }
+        device.bluetoothComponents.services?.first { service ->
             service.uuid?.toString() == serviceId
-        }?.characteristics?.first { characteristic ->
-            characteristic.uuid?.toString() == characteristicId
-        }?.apply {
-            service.bluetoothComponents.gatt?.setCharacteristicNotification(this, true)
+        }?.getCharacteristic(UUID.fromString(characteristicId))?.apply {
+            device.bluetoothComponents.gatt?.setCharacteristicNotification(this, true)
             this.getDescriptor(UUID.fromString(descriptorId))?.let { descriptor ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    service.bluetoothComponents.gatt?.writeDescriptor(
+                    device.bluetoothComponents.gatt?.writeDescriptor(
                         descriptor,
                         BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     )
                 } else {
-                    value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                    device.bluetoothComponents.gatt?.writeDescriptor(
+                        descriptor
+                    )
                 }
             }
         }
@@ -273,6 +275,23 @@ class AndroidBluetoothController(
                     BleStateResult.CharacteristicWrote(
                         gatt!!.device!!.address,
                         characteristic!!.uuid!!.toString()
+                    )
+                )
+            }
+        }
+
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?
+        ) {
+            super.onCharacteristicChanged(gatt, characteristic)
+            controllerScope.launch {
+                _bleStateResult.emit(
+                    BleStateResult.CharacteristicNotified(
+                        address = gatt!!.device!!.address,
+                        serviceId = characteristic!!.service.uuid.toString(),
+                        characteristicId = characteristic.uuid.toString(),
+                        value = characteristic.value.toHexString().replace("0x", "")
                     )
                 )
             }
