@@ -10,7 +10,6 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Log
 import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
 import it.thefedex87.btletest.utils.toHexString
@@ -30,8 +29,8 @@ class AndroidBluetoothController(
     private val controllerJob = SupervisorJob()
     private val controllerScope = CoroutineScope(controllerJob)
 
-    private val _devices = MutableStateFlow<List<BluetoothDevice>>(listOf())
-    override val devices: Flow<List<BluetoothDevice>> = _devices.asStateFlow()
+    private val devices = MutableStateFlow<List<BluetoothDevice>>(listOf())
+    //override val devices: Flow<List<BluetoothDevice>> = _devices.asStateFlow()
 
     private val _isScanning = MutableStateFlow(false)
     override val isScanning = _isScanning.asStateFlow()
@@ -50,27 +49,26 @@ class AndroidBluetoothController(
 
     override fun changeSelectedDevice(address: String) {
         _selectedDeviceState.update {
-            _devices.value.find { it.address == address }
+            devices.value.find { it.address == address }
         }
     }
 
     @SuppressLint("MissingPermission")
-    override fun connectDevices(addresses: List<String>) {
+    override suspend fun connectDevices(addresses: List<String>) {
         if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
             throw Exception("Missing BLUETOOTH_SCAN permission")
         }
 
-        _devices.update {
+        devices.update {
             addresses.map {
+                _bleStateResult.emit(BleStateResult.Connecting(it))
+
                 BluetoothDevice(
                     address = it,
-                    bluetoothComponents = BluetoothComponents(
-                        gatt = null,
-                        services = null
-                    ),
-                    deviceState = DeviceState(
+                    gatt = null,
+                    /*deviceState = DeviceState(
                         isConnecting = true
-                    )
+                    )*/
                 )
             }
         }
@@ -99,14 +97,14 @@ class AndroidBluetoothController(
         characteristicId: String,
         value: String
     ) {
-        val service = _devices.value.first { it.address == address }
-        service.bluetoothComponents.services?.first { service ->
+        val device = devices.value.first { it.address == address }
+        device.gatt?.services?.first { service ->
             service.uuid?.toString() == serviceId
         }?.characteristics?.first { characteristic ->
             characteristic.uuid?.toString() == characteristicId
         }?.apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                service.bluetoothComponents.gatt?.writeCharacteristic(
+                device.gatt.writeCharacteristic(
                     this,
                     value.toByteArray(Charsets.US_ASCII),
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -114,7 +112,7 @@ class AndroidBluetoothController(
             } else {
                 writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 this.value = value.toByteArray(Charsets.US_ASCII)
-                service.bluetoothComponents.gatt?.writeCharacteristic(
+                device.gatt.writeCharacteristic(
                     this
                 )
             }
@@ -128,20 +126,20 @@ class AndroidBluetoothController(
         characteristicId: String,
         descriptorId: String
     ) {
-        val device = _devices.value.first { it.address == address }
-        device.bluetoothComponents.services?.first { service ->
+        val device = devices.value.first { it.address == address }
+        device.gatt?.services?.first { service ->
             service.uuid?.toString() == serviceId
         }?.getCharacteristic(UUID.fromString(characteristicId))?.apply {
-            device.bluetoothComponents.gatt?.setCharacteristicNotification(this, true)
+            device.gatt.setCharacteristicNotification(this, true)
             this.getDescriptor(UUID.fromString(descriptorId))?.let { descriptor ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    device.bluetoothComponents.gatt?.writeDescriptor(
+                    device.gatt.writeDescriptor(
                         descriptor,
                         BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     )
                 } else {
                     descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    device.bluetoothComponents.gatt?.writeDescriptor(
+                    device.gatt.writeDescriptor(
                         descriptor
                     )
                 }
@@ -151,9 +149,9 @@ class AndroidBluetoothController(
 
     @SuppressLint("MissingPermission")
     override fun cleanup() {
-        _devices.value.forEach { device ->
-            device.bluetoothComponents.gatt?.disconnect()
-            device.bluetoothComponents.gatt?.close()
+        devices.value.forEach { device ->
+            device.gatt?.disconnect()
+            device.gatt?.close()
         }
     }
 
@@ -162,16 +160,17 @@ class AndroidBluetoothController(
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
 
-            _devices.value.find { it.address == result?.device?.address && !it.deviceState.connectionRequested }
+            devices.value.find { it.address == result?.device?.address && !it.connectionRequested }
                 ?.let { device ->
-                    val deviceIndex = _devices.value.indexOf(device)
+                    val deviceIndex = devices.value.indexOf(device)
                     val updatedDevice = device.copy(
-                        deviceState = device.deviceState.copy(
+                        /*deviceState = device.deviceState.copy(
                             connectionRequested = true
-                        )
+                        )*/
+                        connectionRequested = true
                     )
 
-                    _devices.update { devices ->
+                    devices.update { devices ->
                         devices.map { device ->
                             if (devices.indexOf(device) == deviceIndex) {
                                 updatedDevice
@@ -199,48 +198,66 @@ class AndroidBluetoothController(
         ) {
             super.onConnectionStateChange(gatt, status, newState)
 
-            _devices.value.find { it.address == gatt?.device?.address }?.let { device ->
-                val deviceIndex = _devices.value.indexOf(device)
-                val updatedDevice = device.copy()
+            devices.value.find { it.address == gatt?.device?.address }?.let { device ->
+                val deviceIndex = devices.value.indexOf(device)
+                val updatedDevice = device.copy(
+                    gatt = gatt
+                )
 
                 if (status == GATT_SUCCESS) {
-                    updatedDevice.bluetoothComponents =
-                        updatedDevice.bluetoothComponents.copy(
-                            gatt = gatt
-                        )
 
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        updatedDevice.deviceState = updatedDevice.deviceState.copy(
+                        /*updatedDevice.deviceState = updatedDevice.deviceState.copy(
                             isConnecting = false,
                             isConnected = true,
                             name = gatt?.device?.name
-                        )
+                        )*/
+                        controllerScope.launch {
+                            _bleStateResult.emit(
+                                BleStateResult.ConnectionEstablished(
+                                    gatt!!.device.address,
+                                    gatt.device.name
+                                )
+                            )
+                        }
 
                         gatt?.discoverServices()
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        updatedDevice.deviceState = updatedDevice.deviceState.copy(
+                        /*updatedDevice.deviceState = updatedDevice.deviceState.copy(
                             isConnecting = false,
                             isConnected = false,
                             name = gatt?.device?.name
-                        )
+                        )*/
+                        controllerScope.launch {
+                            _bleStateResult.emit(
+                                BleStateResult.DisconnectionDone(
+                                    gatt!!.device.address
+                                )
+                            )
+                        }
                     }
                 } else {
                     controllerScope.launch {
                         _error.emit("Error connecting")
+                        _bleStateResult.emit(
+                            BleStateResult.ConnectionError(
+                                gatt!!.device.address,
+                                "Error connecting"
+                            )
+                        )
                     }
-                    device.deviceState = device.deviceState.copy(
+                    /*device.deviceState = device.deviceState.copy(
                         isConnected = false,
                         isConnecting = false
-                    )
+                    )*/
 
                     if (status == 133) {
-                        device.bluetoothComponents.gatt?.disconnect()
-                        device.bluetoothComponents.gatt?.close()
+                        device.gatt?.disconnect()
+                        device.gatt?.close()
                     }
                 }
 
-                Log.d("BLE_TEST", "DS: ${device.deviceState}")
-                _devices.update { devices ->
+                devices.update { devices ->
                     devices.map { device ->
                         if (devices.indexOf(device) == deviceIndex) {
                             updatedDevice
@@ -253,11 +270,11 @@ class AndroidBluetoothController(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            _devices.value.find { it.address == gatt?.device?.address }?.let { device ->
+            /*_devices.value.find { it.address == gatt?.device?.address }?.let { device ->
                 device.bluetoothComponents = device.bluetoothComponents.copy(
                     services = gatt?.services
                 )
-            }
+            }*/
             controllerScope.launch {
                 _bleStateResult.emit(BleStateResult.ServicesDiscovered(gatt!!.device!!.address))
             }

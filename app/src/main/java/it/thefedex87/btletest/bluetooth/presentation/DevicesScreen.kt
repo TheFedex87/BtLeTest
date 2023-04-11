@@ -7,6 +7,7 @@ import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.Composable
@@ -37,7 +38,7 @@ fun DevicesScreen(
                             Icon(imageVector = Icons.Default.Done, contentDescription = null)
                             Text(text = it.batteryLevel?.toString() ?: "")
                         } else {
-                            Icon(imageVector = Icons.Default.Delete, contentDescription = null)
+                            Icon(imageVector = Icons.Default.Close, contentDescription = null)
                         }
                     }
                 }
