@@ -18,6 +18,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.*
 
 class AndroidBluetoothController(
@@ -38,6 +40,37 @@ class AndroidBluetoothController(
     private val _bleStateResult = MutableSharedFlow<BleStateResult>()
     override val bleStateResult: Flow<BleStateResult>
         get() = _bleStateResult.asSharedFlow()
+
+    @SuppressLint("MissingPermission")
+    override suspend fun readCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String
+    ): BleStateResult {
+        val gatt = devices.value.firstOrNull {
+            it.address == address
+        }?.gatt
+        val characteristic = gatt?.services?.firstOrNull {
+            it.uuid.toString() == serviceId
+        }?.characteristics?.firstOrNull {
+            it.uuid.toString() == characteristicId
+        }
+
+        characteristic?.let {
+            return Mutex(false).withLock {
+                _bleStateResult.asSharedFlow()
+                    .onSubscription {
+                        if (!gatt.readCharacteristic(characteristic)) {
+                            emit(BleStateResult.Error)
+                        }
+                    }
+                    .firstOrNull {
+                        it is BleStateResult.CharacteristicRead
+                    } as BleStateResult.CharacteristicRead? ?: BleStateResult.ConnectionError(address, "")
+            }
+        } ?: return BleStateResult.Error
+
+    }
 
     @SuppressLint("MissingPermission")
     override suspend fun connectDevices(addresses: List<String>) {
@@ -185,7 +218,7 @@ class AndroidBluetoothController(
         ) {
             super.onConnectionStateChange(gatt, status, newState)
 
-            if(status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
+            if (status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
                 controllerScope.launch {
                     _bleStateResult.emit(
                         BleStateResult.DisconnectionDone(
@@ -321,6 +354,33 @@ class AndroidBluetoothController(
                     )
                 )
             }
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+            value: ByteArray,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, value, status)
+            _bleStateResult.tryEmit(BleStateResult.CharacteristicRead(
+                gatt.device!!.address,
+                characteristic.service.uuid.toString(),
+                value.toString(Charsets.UTF_8)
+            ))
+        }
+
+        override fun onCharacteristicRead(
+            gatt: BluetoothGatt?,
+            characteristic: BluetoothGattCharacteristic?,
+            status: Int
+        ) {
+            super.onCharacteristicRead(gatt, characteristic, status)
+            _bleStateResult.tryEmit(BleStateResult.CharacteristicRead(
+                gatt!!.device!!.address,
+                characteristic!!.service.uuid.toString(),
+                characteristic.value.toString(Charsets.UTF_8)
+            ))
         }
     }
 

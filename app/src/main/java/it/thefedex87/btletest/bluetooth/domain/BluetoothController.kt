@@ -8,6 +8,13 @@ interface BluetoothController {
     val bleStateResult: Flow<BleStateResult>
 
     suspend fun connectDevices(addresses: List<String>)
+
+    suspend fun readCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String
+    ): BleStateResult
+
     fun writeCharacteristic(address: String, serviceId: String, characteristicId: String, value: String)
     fun registerToCharacteristic(address: String, serviceId: String, characteristicId: String, descriptorId: String)
 

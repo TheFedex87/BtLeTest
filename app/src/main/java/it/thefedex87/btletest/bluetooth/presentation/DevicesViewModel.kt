@@ -41,7 +41,6 @@ class DevicesViewModel @Inject constructor(
 
 
     init {
-
         bluetoothController.bleStateResult.onEach {
             when (it) {
                 is BleStateResult.Connecting -> {
@@ -133,6 +132,12 @@ class DevicesViewModel @Inject constructor(
                             descriptorId = "00002902-0000-1000-8000-00805f9b34fb"
                         )
                     }
+                }
+                is BleStateResult.CharacteristicRead -> {
+
+                }
+                is BleStateResult.Error -> {
+
                 }
             }
 
