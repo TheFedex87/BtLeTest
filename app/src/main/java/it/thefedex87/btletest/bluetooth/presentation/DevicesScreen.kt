@@ -1,49 +1,66 @@
 package it.thefedex87.btletest.bluetooth.presentation
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material.Button
 import androidx.compose.material.CircularProgressIndicator
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 
 @Composable
 fun DevicesScreen(
-    state: DevicesUiState
+    state: DevicesUiState,
+    onConnectRequested: () -> Unit,
+    onDisconnectRequested: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
-        if(state.isLoading) {
+        if (state.isLoading) {
             CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center)
             )
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(state.devices) {
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(text = it.name ?: "No Name")
-                    Spacer(modifier = Modifier.weight(1f))
-                    if (it.isConnecting) {
-                        CircularProgressIndicator()
-                    } else {
-                        if (it.isConnected) {
-                            Icon(imageVector = Icons.Default.Done, contentDescription = null)
-                            Text(text = it.batteryLevel?.toString() ?: "")
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            ) {
+                state.devices.forEach {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(5.dp)
+                    ) {
+                        Text(text = it.name ?: it.address)
+                        Spacer(modifier = Modifier.weight(1f))
+                        if (it.isConnecting) {
+                            CircularProgressIndicator()
                         } else {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = null)
+                            if (it.isConnected) {
+                                Icon(imageVector = Icons.Default.Done, contentDescription = null)
+                                Text(text = it.batteryLevel?.toString() ?: "")
+                            } else {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = null)
+                            }
                         }
                     }
                 }
             }
+            Button(
+                onClick = if (state.connectionState == ConnectionState.CONNECTED) onDisconnectRequested else onConnectRequested,
+                enabled = state.connectionState != ConnectionState.REQUESTED,
+                modifier = Modifier.padding(2.dp)
+            ) {
+                Text(text = if (state.connectionState == ConnectionState.CONNECTED) "Disconnect" else "Connect")
+            }
         }
-
     }
 }

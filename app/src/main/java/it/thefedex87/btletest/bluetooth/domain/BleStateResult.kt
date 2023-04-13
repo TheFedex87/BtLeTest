@@ -7,7 +7,7 @@ sealed interface BleStateResult {
     data class ConnectionError(val address: String, val errorMessage: String): BleStateResult
     data class ConnectionEstablished(val address: String, val name: String): BleStateResult
     data class DisconnectionDone(val address: String): BleStateResult
-    data class ServicesDiscovered(val address: String): BleStateResult
+    //data class ServicesDiscovered(val address: String): BleStateResult
     data class CharacteristicWrote(val address: String, val characteristic: String): BleStateResult
     data class CharacteristicNotified(
         val address: String,

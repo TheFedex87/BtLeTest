@@ -75,7 +75,9 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val deviceViewModel = hiltViewModel<DevicesViewModel>()
                     DevicesScreen(
-                        deviceViewModel.state.collectAsState().value
+                        deviceViewModel.state.collectAsState().value,
+                        deviceViewModel::connect,
+                        deviceViewModel::disconnect
                     )
                 }
             }
