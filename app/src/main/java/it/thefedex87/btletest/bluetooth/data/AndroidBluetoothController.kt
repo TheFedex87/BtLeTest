@@ -10,6 +10,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
 import it.thefedex87.btletest.utils.toHexString
@@ -41,11 +42,14 @@ class AndroidBluetoothController(
     override val bleStateResult: Flow<BleStateResult>
         get() = _bleStateResult.asSharedFlow()
 
+    private val mutex = Mutex(false)
+
     @SuppressLint("MissingPermission")
-    override suspend fun readCharacteristic(
+    override suspend fun writeCharacteristic2(
         address: String,
         serviceId: String,
-        characteristicId: String
+        characteristicId: String,
+        value: String
     ): BleStateResult {
         val gatt = devices.value.firstOrNull {
             it.address == address
@@ -56,21 +60,41 @@ class AndroidBluetoothController(
             it.uuid.toString() == characteristicId
         }
 
-        characteristic?.let {
-            return Mutex(false).withLock {
+        Log.d(
+            "BLE_TEST",
+            "Characteristic $characteristicId is writeable: ${characteristic?.isWritable() ?: "NULL"}"
+        )
+
+        val res = characteristic?.let {
+            mutex.withLock {
                 _bleStateResult.asSharedFlow()
                     .onSubscription {
-                        if (!gatt.readCharacteristic(characteristic)) {
-                            emit(BleStateResult.Error)
+                        gatt.apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                if (gatt.writeCharacteristic(
+                                        it,
+                                        value.toByteArray(Charsets.US_ASCII),
+                                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                                    ) != BluetoothStatusCodes.SUCCESS) {
+                                    emit(BleStateResult.CharacteristicWrote(address, characteristicId, false))
+                                }
+                            } else {
+                                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                                it.value = value.toByteArray(Charsets.US_ASCII)
+                                if (!gatt.writeCharacteristic(it)) {
+                                    emit(BleStateResult.CharacteristicWrote(address, characteristicId, false))
+                                }
+                            }
                         }
                     }
                     .firstOrNull {
-                        it is BleStateResult.CharacteristicRead
-                    } as BleStateResult.CharacteristicRead? ?: BleStateResult.ConnectionError(address, "")
+                        it is BleStateResult.CharacteristicWrote
+                    } as BleStateResult.CharacteristicWrote? ?: BleStateResult.CharacteristicWrote(address, characteristicId, false)
             }
-        } ?: return BleStateResult.Error
-
+        } ?: BleStateResult.CharacteristicWrote(address, characteristicId, false)
+        return res
     }
+
 
     @SuppressLint("MissingPermission")
     override suspend fun connectDevices(addresses: List<String>) {
@@ -315,7 +339,8 @@ class AndroidBluetoothController(
                 _bleStateResult.emit(
                     BleStateResult.CharacteristicWrote(
                         gatt!!.device!!.address,
-                        characteristic!!.uuid!!.toString()
+                        characteristic!!.uuid!!.toString(),
+                        status == GATT_SUCCESS
                     )
                 )
             }
@@ -363,11 +388,13 @@ class AndroidBluetoothController(
             status: Int
         ) {
             super.onCharacteristicRead(gatt, characteristic, value, status)
-            _bleStateResult.tryEmit(BleStateResult.CharacteristicRead(
-                gatt.device!!.address,
-                characteristic.service.uuid.toString(),
-                value.toString(Charsets.UTF_8)
-            ))
+            _bleStateResult.tryEmit(
+                BleStateResult.CharacteristicRead(
+                    gatt.device!!.address,
+                    characteristic.service.uuid.toString(),
+                    value.toString(Charsets.UTF_8)
+                )
+            )
         }
 
         override fun onCharacteristicRead(
@@ -376,15 +403,27 @@ class AndroidBluetoothController(
             status: Int
         ) {
             super.onCharacteristicRead(gatt, characteristic, status)
-            _bleStateResult.tryEmit(BleStateResult.CharacteristicRead(
-                gatt!!.device!!.address,
-                characteristic!!.service.uuid.toString(),
-                characteristic.value.toString(Charsets.UTF_8)
-            ))
+            _bleStateResult.tryEmit(
+                BleStateResult.CharacteristicRead(
+                    gatt!!.device!!.address,
+                    characteristic!!.service.uuid.toString(),
+                    characteristic.value.toString(Charsets.UTF_8)
+                )
+            )
         }
     }
 
     private fun hasPermission(permission: String): Boolean {
         return context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
+}
+
+fun BluetoothGattCharacteristic.isReadable(): Boolean =
+    containsProperty(BluetoothGattCharacteristic.PROPERTY_READ)
+
+fun BluetoothGattCharacteristic.isWritable(): Boolean =
+    containsProperty(BluetoothGattCharacteristic.PROPERTY_WRITE)
+
+fun BluetoothGattCharacteristic.containsProperty(property: Int): Boolean {
+    return properties and property != 0
 }

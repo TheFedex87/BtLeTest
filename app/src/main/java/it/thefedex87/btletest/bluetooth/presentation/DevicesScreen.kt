@@ -19,6 +19,7 @@ fun DevicesScreen(
     state: DevicesUiState,
     onConnectRequested: () -> Unit,
     onDisconnectRequested: () -> Unit,
+    onReadRequested: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (state.isLoading) {
@@ -37,7 +38,9 @@ fun DevicesScreen(
             ) {
                 state.devices.forEach {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(5.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(5.dp)
                     ) {
                         Text(text = it.name ?: it.address)
                         Spacer(modifier = Modifier.weight(1f))
@@ -54,12 +57,21 @@ fun DevicesScreen(
                     }
                 }
             }
-            Button(
-                onClick = if (state.connectionState == ConnectionState.CONNECTED) onDisconnectRequested else onConnectRequested,
-                enabled = state.connectionState != ConnectionState.REQUESTED,
-                modifier = Modifier.padding(2.dp)
-            ) {
-                Text(text = if (state.connectionState == ConnectionState.CONNECTED) "Disconnect" else "Connect")
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = if (state.connectionState == ConnectionState.CONNECTED) onDisconnectRequested else onConnectRequested,
+                    enabled = state.connectionState != ConnectionState.REQUESTED,
+                    modifier = Modifier.padding(2.dp)
+                ) {
+                    Text(text = if (state.connectionState == ConnectionState.CONNECTED) "Disconnect" else "Connect")
+                }
+
+                Button(
+                    onClick = onReadRequested,
+                    enabled = state.connectionState == ConnectionState.CONNECTED
+                ) {
+                    Text(text = "Read")
+                }
             }
         }
     }

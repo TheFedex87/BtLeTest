@@ -77,7 +77,8 @@ class MainActivity : ComponentActivity() {
                     DevicesScreen(
                         deviceViewModel.state.collectAsState().value,
                         deviceViewModel::connect,
-                        deviceViewModel::disconnect
+                        deviceViewModel::disconnect,
+                        deviceViewModel::readCharacteristic
                     )
                 }
             }

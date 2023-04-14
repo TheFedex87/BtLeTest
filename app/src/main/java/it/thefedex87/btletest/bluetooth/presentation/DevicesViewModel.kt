@@ -1,5 +1,6 @@
 package it.thefedex87.btletest.bluetooth.presentation
 
+import android.icu.util.TimeZone
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,6 +8,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import it.thefedex87.btletest.bluetooth.domain.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.time.Clock
+import java.time.LocalDateTime
 import javax.inject.Inject
 
 @HiltViewModel
@@ -136,9 +139,6 @@ class DevicesViewModel @Inject constructor(
                 is BleStateResult.CharacteristicRead -> {
 
                 }
-                is BleStateResult.Error -> {
-
-                }
             }
 
         }.launchIn(viewModelScope)
@@ -168,6 +168,21 @@ class DevicesViewModel @Inject constructor(
             it.copy(
                 connectionState = ConnectionState.DISCONNECTED,
             )
+        }
+    }
+
+    fun Long.toHexString(): String = java.lang.Long.toHexString(this)
+    fun readCharacteristic() {
+        viewModelScope.launch {
+            val payload = "1_64396E08"
+
+            val res = bluetoothController.writeCharacteristic2(
+                "80:1F:12:B7:90:8C",
+                "00003ab3-0000-1000-8000-00805f9b34fb",
+                "00002001-0000-1000-8000-00805f9b34fb",
+                payload
+            )
+            Log.d("BLE_TEST", "Value of characteristic is: $res")
         }
     }
 

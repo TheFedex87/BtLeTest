@@ -9,10 +9,11 @@ interface BluetoothController {
 
     suspend fun connectDevices(addresses: List<String>)
 
-    suspend fun readCharacteristic(
+    suspend fun writeCharacteristic2(
         address: String,
         serviceId: String,
-        characteristicId: String
+        characteristicId: String,
+        value: String
     ): BleStateResult
 
     fun writeCharacteristic(address: String, serviceId: String, characteristicId: String, value: String)
