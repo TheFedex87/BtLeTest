@@ -14,11 +14,8 @@ import android.util.Log
 import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
 import it.thefedex87.btletest.utils.toHexString
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.*
@@ -41,6 +38,8 @@ class AndroidBluetoothController(
     private val _bleStateResult = MutableSharedFlow<BleStateResult>()
     override val bleStateResult: Flow<BleStateResult>
         get() = _bleStateResult.asSharedFlow()
+
+    private val bleConnectionStateResult = MutableSharedFlow<BleDeviceConnectionStateResult>()
 
     private val mutex = Mutex(false)
 
@@ -95,6 +94,105 @@ class AndroidBluetoothController(
         return res
     }
 
+    @SuppressLint("MissingPermission")
+    override suspend fun connectDevices2(addresses: List<String>): Flow<BleConnectionState> = flow {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            throw Exception("Missing BLUETOOTH_SCAN permission")
+        }
+
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.CALLBACK_TYPE_FIRST_MATCH or ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        _isScanning.update { true }
+
+        val connectedList = mutableListOf<BluetoothDevice>()
+        mutex.withLock {
+            val connectCollectorJob = controllerScope.launch {
+                bleConnectionStateResult.onSubscription {
+                    bluetoothAdapter?.bluetoothLeScanner?.startScan(
+                        listOf(),
+                        settings,
+                        scanCallback
+                    )
+                }.collect {result ->
+                    if (result is BleDeviceConnectionStateResult.DeviceConnected) {
+                        if (!connectedList.any { it.address == result.device.address } && addresses.contains(result.device.address)) {
+                            //emit(BleConnectionState.Connecting(result.device.address))
+                            connectedList.add(
+                                BluetoothDevice(
+                                    address = result.device.address,
+                                    device = result.device,
+                                    gatt = null
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
+            delay(7000)
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            _isScanning.update { false }
+            connectCollectorJob.cancel()
+        }
+
+        connectedList.forEach { bluetoothDevice ->
+            emit(BleConnectionState.Connecting(bluetoothDevice.address))
+            mutex.withLock {
+                val res = bleConnectionStateResult.onSubscription {
+                    bluetoothDevice.device!!.connectGatt(context, true, gattCallback)
+                }.firstOrNull {
+                    it is BleDeviceConnectionStateResult.GattConnected
+                } as BleDeviceConnectionStateResult.GattConnected
+
+                bluetoothDevice.gatt = res.gatt
+            }
+        }
+
+        connectedList.forEach {
+            mutex.withLock {
+                bleConnectionStateResult.onSubscription {
+                    if(!it.gatt!!.discoverServices()) {
+                        emit(BleDeviceConnectionStateResult.ServicesDiscovered(success = false))
+                    }
+                }.firstOrNull {
+                    it is BleDeviceConnectionStateResult.ServicesDiscovered
+                }
+
+                emit(BleConnectionState.Connected(it.address, it.device!!.name))
+            }
+        }
+
+        devices.update {
+            connectedList
+        }
+
+        try {
+            bleConnectionStateResult.collect {
+                when(it) {
+                    is BleDeviceConnectionStateResult.Close -> {
+                        throw Exception()
+                    }
+                    is BleDeviceConnectionStateResult.DeviceConnected -> {
+                        emit(
+                            BleConnectionState.Connected(it.device.address, it.device.name)
+                        )
+                    }
+                    is BleDeviceConnectionStateResult.DeviceDisconnected -> {
+                        emit(
+                            BleConnectionState.Disconnected(it.device.address)
+                        )
+                    }
+                    else -> {
+                        // Nothing
+                    }
+                }
+            }
+        } catch (ex: Exception) {
+
+        }
+    }
 
     @SuppressLint("MissingPermission")
     override suspend fun connectDevices(addresses: List<String>) {
@@ -147,7 +245,7 @@ class AndroidBluetoothController(
             characteristic.uuid?.toString() == characteristicId
         }?.apply {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                device.gatt.writeCharacteristic(
+                device.gatt!!.writeCharacteristic(
                     this,
                     value.toByteArray(Charsets.US_ASCII),
                     BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -155,7 +253,7 @@ class AndroidBluetoothController(
             } else {
                 writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 this.value = value.toByteArray(Charsets.US_ASCII)
-                device.gatt.writeCharacteristic(
+                device.gatt!!.writeCharacteristic(
                     this
                 )
             }
@@ -173,16 +271,16 @@ class AndroidBluetoothController(
         device.gatt?.services?.first { service ->
             service.uuid?.toString() == serviceId
         }?.getCharacteristic(UUID.fromString(characteristicId))?.apply {
-            device.gatt.setCharacteristicNotification(this, true)
+            device.gatt!!.setCharacteristicNotification(this, true)
             this.getDescriptor(UUID.fromString(descriptorId))?.let { descriptor ->
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    device.gatt.writeDescriptor(
+                    device.gatt!!.writeDescriptor(
                         descriptor,
                         BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                     )
                 } else {
                     descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    device.gatt.writeDescriptor(
+                    device.gatt!!.writeDescriptor(
                         descriptor
                     )
                 }
@@ -204,32 +302,11 @@ class AndroidBluetoothController(
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             super.onScanResult(callbackType, result)
 
-            devices.value.find { it.address == result?.device?.address && !it.connectionRequested }
-                ?.let { device ->
-                    val deviceIndex = devices.value.indexOf(device)
-                    val updatedDevice = device.copy(
-                        /*deviceState = device.deviceState.copy(
-                            connectionRequested = true
-                        )*/
-                        connectionRequested = true
-                    )
-
-                    devices.update { devices ->
-                        devices.map { device ->
-                            if (devices.indexOf(device) == deviceIndex) {
-                                updatedDevice
-                            } else {
-                                device
-                            }
-                        }
-                    }
-
-                    result?.device?.connectGatt(
-                        context,
-                        true,
-                        gattCallback
-                    )
+            result?.device?.let {
+                controllerScope.launch {
+                    bleConnectionStateResult.emit(BleDeviceConnectionStateResult.DeviceConnected(it))
                 }
+            }
         }
     }
 
@@ -242,7 +319,14 @@ class AndroidBluetoothController(
         ) {
             super.onConnectionStateChange(gatt, status, newState)
 
-            if (status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
+            if(status == GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+                controllerScope.launch {
+                    bleConnectionStateResult.emit(
+                        BleDeviceConnectionStateResult.GattConnected(gatt!!)
+                    )
+                }
+            }
+            /*if (status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
                 controllerScope.launch {
                     _bleStateResult.emit(
                         BleStateResult.DisconnectionDone(
@@ -260,19 +344,6 @@ class AndroidBluetoothController(
                     if (status == GATT_SUCCESS) {
 
                         if (newState == BluetoothProfile.STATE_CONNECTED) {
-                            /*updatedDevice.deviceState = updatedDevice.deviceState.copy(
-                                isConnecting = false,
-                                isConnected = true,
-                                name = gatt?.device?.name
-                            )*/
-                            /*controllerScope.launch {
-                                _bleStateResult.emit(
-                                    BleStateResult.ConnectionEstablished(
-                                        gatt!!.device.address,
-                                        gatt.device.name
-                                    )
-                                )
-                            }*/
 
                             gatt?.discoverServices()
                         }
@@ -285,10 +356,6 @@ class AndroidBluetoothController(
                                 )
                             )
                         }
-                        /*device.deviceState = device.deviceState.copy(
-                            isConnected = false,
-                            isConnecting = false
-                        )*/
 
                         if (status == 133) {
                             device.gatt?.disconnect()
@@ -306,26 +373,23 @@ class AndroidBluetoothController(
                         }
                     }
                 }
-            }
+            }*/
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            /*_devices.value.find { it.address == gatt?.device?.address }?.let { device ->
-                device.bluetoothComponents = device.bluetoothComponents.copy(
-                    services = gatt?.services
-                )
-            }*/
-            /*controllerScope.launch {
-                _bleStateResult.emit(BleStateResult.ServicesDiscovered(gatt!!.device!!.address))
-            }*/
             controllerScope.launch {
+                bleConnectionStateResult.emit(
+                    BleDeviceConnectionStateResult.ServicesDiscovered(success = true)
+                )
+            }
+            /*controllerScope.launch {
                 _bleStateResult.emit(
                     BleStateResult.ConnectionEstablished(
                         gatt!!.device.address,
                         gatt.device.name
                     )
                 )
-            }
+            }*/
             super.onServicesDiscovered(gatt, status)
         }
 

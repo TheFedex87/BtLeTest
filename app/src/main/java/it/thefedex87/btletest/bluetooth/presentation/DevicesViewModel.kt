@@ -152,10 +152,56 @@ class DevicesViewModel @Inject constructor(
                 connectionState = ConnectionState.REQUESTED,
             )
         }
-        viewModelScope.launch {
-            bluetoothController.connectDevices(
+        /*viewModelScope.launch {
+            bluetoothController.connectDevices2(
                 _state.value.devices.map { it.address }
-            )
+            ).forEach { connectedDevice ->
+                val deviceToUpdate =
+                    _state.value.devices.first { device -> device.address == connectedDevice.address }
+                        .copy(
+                            isConnecting = false,
+                            isConnected = true,
+                            name = connectedDevice.name
+                        )
+                updateDeviceInList(deviceToUpdate)
+            }
+        }*/
+        viewModelScope.launch {
+            bluetoothController.connectDevices2(
+                _state.value.devices.map { it.address }
+            ).collect {
+                when(it) {
+                    is BleConnectionState.Connected -> {
+                        val deviceToUpdate =
+                            _state.value.devices.first { device -> device.address == it.address }
+                                .copy(
+                                    isConnecting = false,
+                                    isConnected = true,
+                                    name = it.name
+                                )
+                        updateDeviceInList(deviceToUpdate)
+                    }
+                    is BleConnectionState.Disconnected -> {
+                        val deviceToUpdate =
+                            _state.value.devices.first { device -> device.address == it.address }
+                                .copy(
+                                    isConnecting = false,
+                                    isConnected = false
+                                )
+                        updateDeviceInList(deviceToUpdate)
+                    }
+                    is BleConnectionState.Connecting -> {
+                        val deviceToUpdate =
+                            _state.value.devices.first { device -> device.address == it.address }
+                                .copy(
+                                    isConnecting = true,
+                                    isConnected = false
+                                )
+                        updateDeviceInList(deviceToUpdate)
+                    }
+                }
+
+            }
         }
     }
 

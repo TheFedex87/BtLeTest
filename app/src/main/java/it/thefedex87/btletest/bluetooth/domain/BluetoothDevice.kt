@@ -7,6 +7,7 @@ typealias BluetoothDeviceDomain = BluetoothDevice
 
 data class BluetoothDevice(
     val address: String,
-    val gatt: BluetoothGatt?,
+    val device: android.bluetooth.BluetoothDevice? = null,
+    var gatt: BluetoothGatt?,
     val connectionRequested: Boolean = false,
 )
