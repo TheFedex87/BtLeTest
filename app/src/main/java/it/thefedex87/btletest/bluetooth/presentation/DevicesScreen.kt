@@ -1,6 +1,5 @@
 package it.thefedex87.btletest.bluetooth.presentation
 
-import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Button
 import androidx.compose.material.CircularProgressIndicator
@@ -19,7 +18,7 @@ fun DevicesScreen(
     state: DevicesUiState,
     onConnectRequested: () -> Unit,
     onDisconnectRequested: () -> Unit,
-    onReadRequested: () -> Unit
+    onWriteRequested: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (state.isLoading) {
@@ -67,10 +66,10 @@ fun DevicesScreen(
                 }
 
                 Button(
-                    onClick = onReadRequested,
+                    onClick = onWriteRequested,
                     enabled = state.connectionState == ConnectionState.CONNECTED
                 ) {
-                    Text(text = "Read")
+                    Text(text = "Write")
                 }
             }
         }

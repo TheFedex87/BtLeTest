@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
                         deviceViewModel.state.collectAsState().value,
                         deviceViewModel::connect,
                         deviceViewModel::disconnect,
-                        deviceViewModel::readCharacteristic
+                        deviceViewModel::writeCharacteristic
                     )
                 }
             }

@@ -1,6 +1,5 @@
 package it.thefedex87.btletest.bluetooth.presentation
 
-import android.icu.util.TimeZone
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,8 +7,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import it.thefedex87.btletest.bluetooth.domain.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import java.time.Clock
-import java.time.LocalDateTime
 import javax.inject.Inject
 
 @HiltViewModel
@@ -172,7 +169,7 @@ class DevicesViewModel @Inject constructor(
     }
 
     fun Long.toHexString(): String = java.lang.Long.toHexString(this)
-    fun readCharacteristic() {
+    fun writeCharacteristic() {
         viewModelScope.launch {
             val payload = "1_64396E08"
 
