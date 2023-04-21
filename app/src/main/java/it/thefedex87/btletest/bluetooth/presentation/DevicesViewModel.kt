@@ -41,7 +41,48 @@ class DevicesViewModel @Inject constructor(
 
 
     init {
-        bluetoothController.bleStateResult.onEach {
+        bluetoothController.devicesState.onEach {
+            when(it) {
+                is BleConnectionState.Connected -> {
+                    val deviceToUpdate =
+                        _state.value.devices.first { device -> device.address == it.address }
+                            .copy(
+                                isConnecting = false,
+                                isConnected = true,
+                                name = it.name
+                            )
+                    updateDeviceInList(deviceToUpdate)
+
+                    if(_state.value.devices.all { it.isConnected }) {
+                        _state.update {
+                            it.copy(
+                                connectionState = ConnectionState.CONNECTED
+                            )
+                        }
+                    }
+                }
+                is BleConnectionState.Disconnected -> {
+                    val deviceToUpdate =
+                        _state.value.devices.first { device -> device.address == it.address }
+                            .copy(
+                                isConnecting = false,
+                                isConnected = false
+                            )
+                    updateDeviceInList(deviceToUpdate)
+                }
+                is BleConnectionState.Connecting -> {
+                    val deviceToUpdate =
+                        _state.value.devices.first { device -> device.address == it.address }
+                            .copy(
+                                isConnecting = true,
+                                isConnected = false
+                            )
+                    updateDeviceInList(deviceToUpdate)
+                }
+            }
+        }.launchIn(viewModelScope)
+
+        /*bluetoothController.bleStateResult.onEach {
             when (it) {
                 is BleStateResult.Connecting -> {
                     val deviceToUpdate =
@@ -138,7 +179,7 @@ class DevicesViewModel @Inject constructor(
                 }
             }
 
-        }.launchIn(viewModelScope)
+        }.launchIn(viewModelScope)*/
     }
 
     override fun onCleared() {
@@ -167,41 +208,9 @@ class DevicesViewModel @Inject constructor(
             }
         }*/
         viewModelScope.launch {
-            bluetoothController.connectDevices2(
+            bluetoothController.connectDevices(
                 _state.value.devices.map { it.address }
-            ).collect {
-                when(it) {
-                    is BleConnectionState.Connected -> {
-                        val deviceToUpdate =
-                            _state.value.devices.first { device -> device.address == it.address }
-                                .copy(
-                                    isConnecting = false,
-                                    isConnected = true,
-                                    name = it.name
-                                )
-                        updateDeviceInList(deviceToUpdate)
-                    }
-                    is BleConnectionState.Disconnected -> {
-                        val deviceToUpdate =
-                            _state.value.devices.first { device -> device.address == it.address }
-                                .copy(
-                                    isConnecting = false,
-                                    isConnected = false
-                                )
-                        updateDeviceInList(deviceToUpdate)
-                    }
-                    is BleConnectionState.Connecting -> {
-                        val deviceToUpdate =
-                            _state.value.devices.first { device -> device.address == it.address }
-                                .copy(
-                                    isConnecting = true,
-                                    isConnected = false
-                                )
-                        updateDeviceInList(deviceToUpdate)
-                    }
-                }
-
-            }
+            )
         }
     }
 
@@ -219,7 +228,7 @@ class DevicesViewModel @Inject constructor(
         viewModelScope.launch {
             val payload = "1_64396E08"
 
-            val res = bluetoothController.writeCharacteristic2(
+            val res = bluetoothController.writeCharacteristic(
                 "80:1F:12:B7:90:8C",
                 "00003ab3-0000-1000-8000-00805f9b34fb",
                 "00002001-0000-1000-8000-00805f9b34fb",

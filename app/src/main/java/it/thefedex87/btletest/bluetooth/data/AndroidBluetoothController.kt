@@ -35,67 +35,42 @@ class AndroidBluetoothController(
     private val _isScanning = MutableStateFlow(false)
     override val isScanning = _isScanning.asStateFlow()
 
-    private val _bleStateResult = MutableSharedFlow<BleStateResult>()
-    override val bleStateResult: Flow<BleStateResult>
-        get() = _bleStateResult.asSharedFlow()
+    private val bleDeviceStateResult = MutableSharedFlow<BleDeviceStateResult>()
 
-    private val bleConnectionStateResult = MutableSharedFlow<BleDeviceConnectionStateResult>()
+    //private val clean = MutableSharedFlow<Boolean>()
 
     private val mutex = Mutex(false)
 
-    @SuppressLint("MissingPermission")
-    override suspend fun writeCharacteristic2(
-        address: String,
-        serviceId: String,
-        characteristicId: String,
-        value: String
-    ): BleStateResult {
-        val gatt = devices.value.firstOrNull {
-            it.address == address
-        }?.gatt
-        val characteristic = gatt?.services?.firstOrNull {
-            it.uuid.toString() == serviceId
-        }?.characteristics?.firstOrNull {
-            it.uuid.toString() == characteristicId
+    override val devicesState: Flow<BleConnectionState>
+        @SuppressLint("MissingPermission")
+        get() = flow {
+            bleDeviceStateResult.collect { state ->
+                Log.d("BLE_TEST", "Received new state device: $state")
+                when(state) {
+                    is BleDeviceStateResult.GattConnected -> {
+                        emit(
+                            BleConnectionState.Connected(state.gatt.device.address, state.gatt.device.name)
+                        )
+                    }
+                    is BleDeviceStateResult.DeviceDisconnected -> {
+                        emit(
+                            BleConnectionState.Disconnected(state.device.address)
+                        )
+                    }
+                    is BleDeviceStateResult.DeviceConnecting -> {
+                        emit(
+                            BleConnectionState.Connecting(state.device.address)
+                        )
+                    }
+                    else -> {
+                        // Nothing
+                    }
+                }
+            }
         }
 
-        Log.d(
-            "BLE_TEST",
-            "Characteristic $characteristicId is writeable: ${characteristic?.isWritable() ?: "NULL"}"
-        )
-
-        val res = characteristic?.let {
-            mutex.withLock {
-                _bleStateResult.asSharedFlow()
-                    .onSubscription {
-                        gatt.apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                if (gatt.writeCharacteristic(
-                                        it,
-                                        value.toByteArray(Charsets.US_ASCII),
-                                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                                    ) != BluetoothStatusCodes.SUCCESS) {
-                                    emit(BleStateResult.CharacteristicWrote(address, characteristicId, false))
-                                }
-                            } else {
-                                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                                it.value = value.toByteArray(Charsets.US_ASCII)
-                                if (!gatt.writeCharacteristic(it)) {
-                                    emit(BleStateResult.CharacteristicWrote(address, characteristicId, false))
-                                }
-                            }
-                        }
-                    }
-                    .firstOrNull {
-                        it is BleStateResult.CharacteristicWrote
-                    } as BleStateResult.CharacteristicWrote? ?: BleStateResult.CharacteristicWrote(address, characteristicId, false)
-            }
-        } ?: BleStateResult.CharacteristicWrote(address, characteristicId, false)
-        return res
-    }
-
     @SuppressLint("MissingPermission")
-    override suspend fun connectDevices2(addresses: List<String>): Flow<BleConnectionState> = flow {
+    override suspend fun connectDevices(addresses: List<String>) {
         if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
             throw Exception("Missing BLUETOOTH_SCAN permission")
         }
@@ -109,14 +84,14 @@ class AndroidBluetoothController(
         val connectedList = mutableListOf<BluetoothDevice>()
         mutex.withLock {
             val connectCollectorJob = controllerScope.launch {
-                bleConnectionStateResult.onSubscription {
+                bleDeviceStateResult.onSubscription {
                     bluetoothAdapter?.bluetoothLeScanner?.startScan(
                         listOf(),
                         settings,
                         scanCallback
                     )
                 }.collect {result ->
-                    if (result is BleDeviceConnectionStateResult.DeviceConnected) {
+                    if (result is BleDeviceStateResult.DeviceConnected) {
                         if (!connectedList.any { it.address == result.device.address } && addresses.contains(result.device.address)) {
                             //emit(BleConnectionState.Connecting(result.device.address))
                             connectedList.add(
@@ -138,13 +113,18 @@ class AndroidBluetoothController(
         }
 
         connectedList.forEach { bluetoothDevice ->
-            emit(BleConnectionState.Connecting(bluetoothDevice.address))
+            //emit(BleConnectionState.Connecting(bluetoothDevice.address))
+            controllerScope.launch {
+                bleDeviceStateResult.emit(
+                    BleDeviceStateResult.DeviceConnecting(bluetoothDevice.device!!)
+                )
+            }
             mutex.withLock {
-                val res = bleConnectionStateResult.onSubscription {
+                val res = bleDeviceStateResult.onSubscription {
                     bluetoothDevice.device!!.connectGatt(context, true, gattCallback)
                 }.firstOrNull {
-                    it is BleDeviceConnectionStateResult.GattConnected
-                } as BleDeviceConnectionStateResult.GattConnected
+                    it is BleDeviceStateResult.GattConnected
+                } as BleDeviceStateResult.GattConnected
 
                 bluetoothDevice.gatt = res.gatt
             }
@@ -152,15 +132,15 @@ class AndroidBluetoothController(
 
         connectedList.forEach {
             mutex.withLock {
-                bleConnectionStateResult.onSubscription {
+                bleDeviceStateResult.onSubscription {
                     if(!it.gatt!!.discoverServices()) {
-                        emit(BleDeviceConnectionStateResult.ServicesDiscovered(success = false))
+                        emit(BleDeviceStateResult.ServicesDiscovered(success = false))
                     }
                 }.firstOrNull {
-                    it is BleDeviceConnectionStateResult.ServicesDiscovered
+                    it is BleDeviceStateResult.ServicesDiscovered
                 }
 
-                emit(BleConnectionState.Connected(it.address, it.device!!.name))
+                //emit(BleConnectionState.Connected(it.address, it.device!!.name))
             }
         }
 
@@ -168,20 +148,22 @@ class AndroidBluetoothController(
             connectedList
         }
 
-        try {
-            bleConnectionStateResult.collect {
-                when(it) {
-                    is BleDeviceConnectionStateResult.Close -> {
-                        throw Exception()
-                    }
-                    is BleDeviceConnectionStateResult.DeviceConnected -> {
+        /*try {
+            Log.d("BLE_TEST", "Start of devices connection state")
+            bleDeviceStateResult.combine(clean) { state, clean ->
+                Pair(state, clean)
+            }.collect { (state, clean) ->
+                Log.d("BLE_TEST", "Clean is $clean")
+                if(clean) throw Exception()
+                when(state) {
+                    is BleDeviceStateResult.GattConnected -> {
                         emit(
-                            BleConnectionState.Connected(it.device.address, it.device.name)
+                            BleConnectionState.Connected(state.gatt.device.address, state.gatt.device.name)
                         )
                     }
-                    is BleDeviceConnectionStateResult.DeviceDisconnected -> {
+                    is BleDeviceStateResult.DeviceDisconnected -> {
                         emit(
-                            BleConnectionState.Disconnected(it.device.address)
+                            BleConnectionState.Disconnected(state.device.address)
                         )
                     }
                     else -> {
@@ -189,49 +171,67 @@ class AndroidBluetoothController(
                     }
                 }
             }
+            Log.d("BLE_TEST", "End of devices connection state")
         } catch (ex: Exception) {
-
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    override suspend fun connectDevices(addresses: List<String>) {
-        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
-            throw Exception("Missing BLUETOOTH_SCAN permission")
-        }
-
-        devices.update {
-            addresses.map {
-                _bleStateResult.emit(BleStateResult.Connecting(it))
-
-                BluetoothDevice(
-                    address = it,
-                    gatt = null,
-                    /*deviceState = DeviceState(
-                        isConnecting = true
-                    )*/
-                )
+            Log.d("BLE_TEST", "Disconnection requested")
+            connectedList.forEach {
+                emit(BleConnectionState.Disconnected(it.device!!.address))
             }
-        }
-
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.CALLBACK_TYPE_FIRST_MATCH or ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
-
-        _isScanning.update { true }
-        bluetoothAdapter?.bluetoothLeScanner?.startScan(
-            listOf(),
-            settings,
-            scanCallback
-        )
-        controllerScope.launch {
-            delay(7000)
-            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-            _isScanning.update { false }
-        }
+        }*/
     }
 
     @SuppressLint("MissingPermission")
+    override suspend fun writeCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String,
+        value: String
+    ): BleDeviceStateResult {
+        val gatt = devices.value.firstOrNull {
+            it.address == address
+        }?.gatt
+        val characteristic = gatt?.services?.firstOrNull {
+            it.uuid.toString() == serviceId
+        }?.characteristics?.firstOrNull {
+            it.uuid.toString() == characteristicId
+        }
+
+        Log.d(
+            "BLE_TEST",
+            "Characteristic $characteristicId is writeable: ${characteristic?.isWritable() ?: "NULL"}"
+        )
+
+        val res = characteristic?.let {
+            mutex.withLock {
+                bleDeviceStateResult.asSharedFlow()
+                    .onSubscription {
+                        gatt.apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                if (gatt.writeCharacteristic(
+                                        it,
+                                        value.toByteArray(Charsets.US_ASCII),
+                                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                                    ) != BluetoothStatusCodes.SUCCESS) {
+                                    emit(BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false))
+                                }
+                            } else {
+                                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                                it.value = value.toByteArray(Charsets.US_ASCII)
+                                if (!gatt.writeCharacteristic(it)) {
+                                    emit(BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false))
+                                }
+                            }
+                        }
+                    }
+                    .firstOrNull {
+                        it is BleDeviceStateResult.CharacteristicWrote
+                    } as BleDeviceStateResult.CharacteristicWrote? ?: BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false)
+            }
+        } ?: BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false)
+        return res
+    }
+
+    /*@SuppressLint("MissingPermission")
     override fun writeCharacteristic(
         address: String,
         serviceId: String,
@@ -258,9 +258,49 @@ class AndroidBluetoothController(
                 )
             }
         }
-    }
+    }*/
 
     @SuppressLint("MissingPermission")
+    override fun registerToCharacteristic(
+        address: String,
+        serviceId: String,
+        characteristicId: String,
+        descriptorId: String
+    ): Flow<String> = flow {
+        val device = devices.value.first { it.address == address }
+        device.gatt?.services?.first { service ->
+            service.uuid?.toString() == serviceId
+        }?.getCharacteristic(UUID.fromString(characteristicId))?.apply {
+            val characteristic = this
+
+            try {
+                bleDeviceStateResult.onSubscription {
+                    device.gatt!!.setCharacteristicNotification(characteristic, true)
+                    characteristic.getDescriptor(UUID.fromString(descriptorId))?.let { descriptor ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            device.gatt!!.writeDescriptor(
+                                descriptor,
+                                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            )
+                        } else {
+                            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                            device.gatt!!.writeDescriptor(
+                                descriptor
+                            )
+                        }
+                    }
+                }.filter {
+                    it is BleDeviceStateResult.CharacteristicNotified && it.characteristicId == characteristicId
+                }.collect {state ->
+                    emit((state as BleDeviceStateResult.CharacteristicNotified).value)
+                }
+            } catch (ex: Exception) {
+                Log.d("BLE_TEST", "Stop update notification requested")
+            }
+        }
+    }
+
+    /*@SuppressLint("MissingPermission")
     override fun registerToCharacteristic(
         address: String,
         serviceId: String,
@@ -286,7 +326,7 @@ class AndroidBluetoothController(
                 }
             }
         }
-    }
+    }*/
 
     @SuppressLint("MissingPermission")
     override fun cleanup() {
@@ -304,7 +344,7 @@ class AndroidBluetoothController(
 
             result?.device?.let {
                 controllerScope.launch {
-                    bleConnectionStateResult.emit(BleDeviceConnectionStateResult.DeviceConnected(it))
+                    bleDeviceStateResult.emit(BleDeviceStateResult.DeviceConnected(it))
                 }
             }
         }
@@ -319,13 +359,38 @@ class AndroidBluetoothController(
         ) {
             super.onConnectionStateChange(gatt, status, newState)
 
-            if(status == GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+            if (status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
                 controllerScope.launch {
-                    bleConnectionStateResult.emit(
-                        BleDeviceConnectionStateResult.GattConnected(gatt!!)
+                    bleDeviceStateResult.emit(
+                        BleDeviceStateResult.DeviceDisconnected(gatt!!.device)
                     )
                 }
+            } else {
+                if(status == GATT_SUCCESS) {
+                    if(newState == BluetoothProfile.STATE_CONNECTED) {
+                        controllerScope.launch {
+                            bleDeviceStateResult.emit(
+                                BleDeviceStateResult.GattConnected(gatt!!)
+                            )
+                        }
+                    }
+                } else {
+                    controllerScope.launch {
+                        bleDeviceStateResult.emit(
+                            BleDeviceStateResult.Error(
+                                gatt!!.device.address,
+                                "Error connecting"
+                            )
+                        )
+                    }
+
+                    if (status == 133) {
+                        gatt?.disconnect()
+                        gatt?.close()
+                    }
+                }
             }
+
             /*if (status == GATT_SUCCESS && newState == BluetoothProfile.STATE_DISCONNECTED) {
                 controllerScope.launch {
                     _bleStateResult.emit(
@@ -378,8 +443,8 @@ class AndroidBluetoothController(
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             controllerScope.launch {
-                bleConnectionStateResult.emit(
-                    BleDeviceConnectionStateResult.ServicesDiscovered(success = true)
+                bleDeviceStateResult.emit(
+                    BleDeviceStateResult.ServicesDiscovered(success = true)
                 )
             }
             /*controllerScope.launch {
@@ -400,8 +465,15 @@ class AndroidBluetoothController(
         ) {
             super.onCharacteristicWrite(gatt, characteristic, status)
             controllerScope.launch {
-                _bleStateResult.emit(
+                /*_bleStateResult.emit(
                     BleStateResult.CharacteristicWrote(
+                        gatt!!.device!!.address,
+                        characteristic!!.uuid!!.toString(),
+                        status == GATT_SUCCESS
+                    )
+                )*/
+                bleDeviceStateResult.emit(
+                    BleDeviceStateResult.CharacteristicWrote(
                         gatt!!.device!!.address,
                         characteristic!!.uuid!!.toString(),
                         status == GATT_SUCCESS
@@ -416,8 +488,16 @@ class AndroidBluetoothController(
         ) {
             super.onCharacteristicChanged(gatt, characteristic)
             controllerScope.launch {
-                _bleStateResult.emit(
+                /*_bleStateResult.emit(
                     BleStateResult.CharacteristicNotified(
+                        address = gatt!!.device!!.address,
+                        serviceId = characteristic!!.service.uuid.toString(),
+                        characteristicId = characteristic.uuid.toString(),
+                        value = characteristic.value.toHexString().replace("0x", "")
+                    )
+                )*/
+                bleDeviceStateResult.emit(
+                    BleDeviceStateResult.CharacteristicNotified(
                         address = gatt!!.device!!.address,
                         serviceId = characteristic!!.service.uuid.toString(),
                         characteristicId = characteristic.uuid.toString(),
@@ -434,8 +514,16 @@ class AndroidBluetoothController(
         ) {
             super.onCharacteristicChanged(gatt, characteristic, value)
             controllerScope.launch {
-                _bleStateResult.emit(
+                /*_bleStateResult.emit(
                     BleStateResult.CharacteristicNotified(
+                        address = gatt.device!!.address,
+                        serviceId = characteristic.service.uuid.toString(),
+                        characteristicId = characteristic.uuid.toString(),
+                        value = value.toString(Charsets.UTF_8)
+                    )
+                )*/
+                bleDeviceStateResult.emit(
+                    BleDeviceStateResult.CharacteristicNotified(
                         address = gatt.device!!.address,
                         serviceId = characteristic.service.uuid.toString(),
                         characteristicId = characteristic.uuid.toString(),
@@ -452,8 +540,15 @@ class AndroidBluetoothController(
             status: Int
         ) {
             super.onCharacteristicRead(gatt, characteristic, value, status)
-            _bleStateResult.tryEmit(
+            /*_bleStateResult.tryEmit(
                 BleStateResult.CharacteristicRead(
+                    gatt.device!!.address,
+                    characteristic.service.uuid.toString(),
+                    value.toString(Charsets.UTF_8)
+                )
+            )*/
+            bleDeviceStateResult.tryEmit(
+                BleDeviceStateResult.CharacteristicRead(
                     gatt.device!!.address,
                     characteristic.service.uuid.toString(),
                     value.toString(Charsets.UTF_8)
@@ -467,8 +562,15 @@ class AndroidBluetoothController(
             status: Int
         ) {
             super.onCharacteristicRead(gatt, characteristic, status)
-            _bleStateResult.tryEmit(
+            /*_bleStateResult.tryEmit(
                 BleStateResult.CharacteristicRead(
+                    gatt!!.device!!.address,
+                    characteristic!!.service.uuid.toString(),
+                    characteristic.value.toString(Charsets.UTF_8)
+                )
+            )*/
+            bleDeviceStateResult.tryEmit(
+                BleDeviceStateResult.CharacteristicRead(
                     gatt!!.device!!.address,
                     characteristic!!.service.uuid.toString(),
                     characteristic.value.toString(Charsets.UTF_8)
