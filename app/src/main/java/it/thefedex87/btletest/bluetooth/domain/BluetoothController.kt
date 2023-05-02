@@ -1,5 +1,6 @@
 package it.thefedex87.btletest.bluetooth.domain
 
+import it.thefedex87.btletest.bluetooth.domain.tmp.GattEvent
 import kotlinx.coroutines.flow.Flow
 
 interface BluetoothController {
@@ -15,7 +16,7 @@ interface BluetoothController {
         serviceId: String,
         characteristicId: String,
         value: String
-    ): BleDeviceStateResult
+    ): GattEvent
 
     //fun writeCharacteristic(address: String, serviceId: String, characteristicId: String, value: String)
     //fun registerToCharacteristic(address: String, serviceId: String, characteristicId: String, descriptorId: String)

@@ -14,13 +14,15 @@ class DevicesViewModel @Inject constructor(
     private val bluetoothController: BluetoothController
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(DevicesUiState(
-        devices = listOf(
-            BluetoothDeviceUiModel(
-                address = "80:1F:12:B7:90:8C"
+    private val _state = MutableStateFlow(
+        DevicesUiState(
+            devices = listOf(
+                BluetoothDeviceUiModel(
+                    address = "80:1F:12:B7:90:8C"
+                )
             )
         )
-    ))
+    )
     val state = combine(
         _state.asStateFlow(),
         bluetoothController.isScanning
@@ -42,7 +44,8 @@ class DevicesViewModel @Inject constructor(
 
     init {
         bluetoothController.devicesState.onEach {
-            when(it) {
+            Log.d("BLE_TEST", "ViewModel has received new deviceState: $it")
+            when (it) {
                 is BleConnectionState.Connected -> {
                     val deviceToUpdate =
                         _state.value.devices.first { device -> device.address == it.address }
@@ -53,13 +56,35 @@ class DevicesViewModel @Inject constructor(
                             )
                     updateDeviceInList(deviceToUpdate)
 
-                    if(_state.value.devices.all { it.isConnected }) {
+                    if (_state.value.devices.all { it.isConnected }) {
                         _state.update {
                             it.copy(
                                 connectionState = ConnectionState.CONNECTED
                             )
                         }
                     }
+
+                    val res = bluetoothController.writeCharacteristic(
+                        address = it.address,
+                        serviceId = "00003ab2-0000-1000-8000-00805f9b34fb",
+                        characteristicId = "00001001-0000-1000-8000-00805f9b34fb",
+                        value = "abaad486d1884ac8"
+                    )
+                    Log.d("BLE_TEST", "Res of write is: $res")
+
+                    bluetoothController.registerToCharacteristic(
+                        address = it.address,
+                        serviceId = "0000180f-0000-1000-8000-00805f9b34fb",
+                        characteristicId = "00002a19-0000-1000-8000-00805f9b34fb",
+                        descriptorId = "00002902-0000-1000-8000-00805f9b34fb"
+                    ).onEach { batteryLevel ->
+                        updateDeviceInList(
+                            _state.value.devices.first { device -> device.address == it.address }
+                                .copy(
+                                    batteryLevel = batteryLevel.toInt(radix = 16)
+                                )
+                        )
+                    }.launchIn(viewModelScope)
                 }
                 is BleConnectionState.Disconnected -> {
                     val deviceToUpdate =
@@ -79,107 +104,11 @@ class DevicesViewModel @Inject constructor(
                             )
                     updateDeviceInList(deviceToUpdate)
                 }
+                is BleConnectionState.Nothing -> {
+                    // Nothing
+                }
             }
         }.launchIn(viewModelScope)
-
-        /*bluetoothController.bleStateResult.onEach {
-            when (it) {
-                is BleStateResult.Connecting -> {
-                    val deviceToUpdate =
-                        _state.value.devices.first { device -> device.address == it.address }
-                            .copy(
-                                isConnecting = true
-                            )
-                    updateDeviceInList(deviceToUpdate)
-                }
-                is BleStateResult.ConnectionError -> {
-                    val deviceToUpdate =
-                        _state.value.devices.first { device -> device.address == it.address }
-                            .copy(
-                                isConnecting = false,
-                            )
-                    updateDeviceInList(deviceToUpdate)
-                }
-                is BleStateResult.ConnectionEstablished -> {
-                    val deviceToUpdate =
-                        _state.value.devices.first { device -> device.address == it.address }
-                            .copy(
-                                isConnecting = false,
-                                isConnected = true,
-                                name = it.name
-                            )
-                    updateDeviceInList(deviceToUpdate)
-
-                    bluetoothController.writeCharacteristic(
-                        address = it.address,
-                        serviceId = "00003ab2-0000-1000-8000-00805f9b34fb",
-                        characteristicId = "00001001-0000-1000-8000-00805f9b34fb",
-                        value = "abaad486d1884ac8"
-                    )
-
-                    if(_state.value.devices.all { it.isConnected }) {
-                        _state.update {
-                            it.copy(
-                                connectionState = ConnectionState.CONNECTED
-                            )
-                        }
-                    }
-                }
-                is BleStateResult.DisconnectionDone -> {
-                    val deviceToUpdate =
-                        _state.value.devices.first { device -> device.address == it.address }
-                            .copy(
-                                isConnecting = false,
-                                isConnected = false,
-                                batteryLevel = null
-                            )
-                    Log.d("BLE_TEST", "Disconnection of device: $deviceToUpdate")
-
-                    updateDeviceInList(deviceToUpdate)
-                }
-                /*is BleStateResult.ServicesDiscovered -> {
-                    Log.d("BLE_TEST", "Services discovered for device: ${it.address}")
-                    bluetoothController.writeCharacteristic(
-                        address = it.address,
-                        serviceId = "00003ab2-0000-1000-8000-00805f9b34fb",
-                        characteristicId = "00001001-0000-1000-8000-00805f9b34fb",
-                        value = "abaad486d1884ac8"
-                    )
-                }*/
-                is BleStateResult.CharacteristicNotified -> {
-                    val deviceToUpdate =
-                        _state.value.devices.first { device -> device.address == it.address }
-                            .copy(
-                                batteryLevel = it.value.toInt(radix = 16)
-                            )
-                    _state.update { state ->
-                        state.copy(
-                            devices = _state.value.devices.map { d ->
-                                if (d.address == deviceToUpdate.address) {
-                                    deviceToUpdate
-                                } else {
-                                    d
-                                }
-                            }
-                        )
-                    }
-                }
-                is BleStateResult.CharacteristicWrote -> {
-                    if (it.characteristic == "00001001-0000-1000-8000-00805f9b34fb") {
-                        bluetoothController.registerToCharacteristic(
-                            address = it.address,
-                            serviceId = "0000180f-0000-1000-8000-00805f9b34fb",
-                            characteristicId = "00002a19-0000-1000-8000-00805f9b34fb",
-                            descriptorId = "00002902-0000-1000-8000-00805f9b34fb"
-                        )
-                    }
-                }
-                is BleStateResult.CharacteristicRead -> {
-
-                }
-            }
-
-        }.launchIn(viewModelScope)*/
     }
 
     override fun onCleared() {
@@ -193,20 +122,6 @@ class DevicesViewModel @Inject constructor(
                 connectionState = ConnectionState.REQUESTED,
             )
         }
-        /*viewModelScope.launch {
-            bluetoothController.connectDevices2(
-                _state.value.devices.map { it.address }
-            ).forEach { connectedDevice ->
-                val deviceToUpdate =
-                    _state.value.devices.first { device -> device.address == connectedDevice.address }
-                        .copy(
-                            isConnecting = false,
-                            isConnected = true,
-                            name = connectedDevice.name
-                        )
-                updateDeviceInList(deviceToUpdate)
-            }
-        }*/
         viewModelScope.launch {
             bluetoothController.connectDevices(
                 _state.value.devices.map { it.address }

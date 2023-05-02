@@ -13,6 +13,7 @@ import android.os.Build
 import android.util.Log
 import it.thefedex87.btletest.bluetooth.domain.*
 import it.thefedex87.btletest.bluetooth.domain.BluetoothDevice
+import it.thefedex87.btletest.bluetooth.domain.tmp.GattEvent
 import it.thefedex87.btletest.utils.toHexString
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -186,7 +187,7 @@ class AndroidBluetoothController(
         serviceId: String,
         characteristicId: String,
         value: String
-    ): BleDeviceStateResult {
+    ): GattEvent {
         val gatt = devices.value.firstOrNull {
             it.address == address
         }?.gatt
@@ -228,7 +229,7 @@ class AndroidBluetoothController(
                     } as BleDeviceStateResult.CharacteristicWrote? ?: BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false)
             }
         } ?: BleDeviceStateResult.CharacteristicWrote(address, characteristicId, false)
-        return res
+        return GattEvent.CharacteristicWrote("", "", "", true)
     }
 
     /*@SuppressLint("MissingPermission")
