@@ -3,11 +3,16 @@ package it.thefedex87.btletest.bluetooth.data
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.*
+import android.bluetooth.BluetoothDevice.ACTION_BOND_STATE_CHANGED
+import android.bluetooth.BluetoothDevice.EXTRA_BOND_STATE
 import android.bluetooth.BluetoothGatt.GATT_SUCCESS
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -48,6 +53,12 @@ class AndroidBluetoothController2(
         get() = _boundDevices.asStateFlow().map {
             it.map { it.address }
         }
+
+    private val bondStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            Log.d("BLE_TEST", "Received action in bondStateReceiver is: ${intent?.action} with extra ${intent?.getIntExtra(EXTRA_BOND_STATE, -99)}")
+        }
+    }
 
     init {
         updatePairedDevices()
@@ -108,11 +119,12 @@ class AndroidBluetoothController2(
             throw Exception("Missing BLUETOOTH_SCAN permission")
         }
 
+        context.registerReceiver(bondStateReceiver, IntentFilter(ACTION_BOND_STATE_CHANGED))
+
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.CALLBACK_TYPE_FIRST_MATCH or ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        _isScanning.update { true }
         devices.update {
             addresses.map {
                 BluetoothDeviceDomain(
@@ -139,6 +151,7 @@ class AndroidBluetoothController2(
         }
 
         if(connectedList.size < addresses.size) {
+            _isScanning.update { true }
             mutex.withLock {
                 val connectCollectorJob = controllerScope.launch {
                     gattEvent.onSubscription {
@@ -187,6 +200,8 @@ class AndroidBluetoothController2(
                 } as GattEvent.DeviceConnected
 
                 it.gatt = res.gatt
+
+                //it.device!!.createBond()
             }
         }
 
@@ -334,6 +349,8 @@ class AndroidBluetoothController2(
 
     @SuppressLint("MissingPermission")
     override fun cleanup() {
+        context.unregisterReceiver(bondStateReceiver)
+
         controllerScope.launch {
             devices.value.forEach { device ->
                 mutex.withLock {
@@ -472,6 +489,8 @@ class AndroidBluetoothController2(
                         value = characteristic.value.toHexString().replace("0x", "")
                     )
                 )
+
+
             }
         }
     }
