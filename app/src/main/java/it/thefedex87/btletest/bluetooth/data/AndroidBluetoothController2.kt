@@ -43,6 +43,29 @@ class AndroidBluetoothController2(
     override val isScanning: Flow<Boolean>
         get() = _isScanning.asStateFlow()
 
+    private val _boundDevices = MutableStateFlow<List<android.bluetooth.BluetoothDevice>>(emptyList())
+    override val boundDevices: Flow<List<String>>
+        get() = _boundDevices.asStateFlow().map {
+            it.map { it.address }
+        }
+
+    init {
+        updatePairedDevices()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun updatePairedDevices() {
+        if(!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+            return
+        }
+        bluetoothAdapter
+            ?.bondedDevices
+            ?.map { it }
+            ?.also { devices ->
+                _boundDevices.update { devices }
+            }
+    }
+
     override val devicesState: Flow<BleConnectionState>
         @SuppressLint("MissingPermission")
         get() = flow {
@@ -101,36 +124,52 @@ class AndroidBluetoothController2(
         }
 
         val connectedList = mutableListOf<BluetoothDevice>()
-        mutex.withLock {
-            val connectCollectorJob = controllerScope.launch {
-                gattEvent.onSubscription {
-                    bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                        listOf(),
-                        settings,
-                        scanCallback
+        addresses.forEach { address ->
+            _boundDevices.value
+                .firstOrNull { it.address == address }
+                ?.let {
+                    connectedList.add(
+                        BluetoothDeviceDomain(
+                            address = it.address,
+                            device = it,
+                            gatt = null
+                        )
                     )
-                }.collect { result ->
-                    if (result is GattEvent.DeviceDiscovered) {
-                        if (!connectedList.any { it.address == result.device.address } && addresses.contains(
-                                result.device.address
-                            )) {
-                            //emit(BleConnectionState.Connecting(result.device.address))
-                            connectedList.add(
-                                BluetoothDevice(
-                                    address = result.device.address,
-                                    device = result.device,
-                                    gatt = null
+                }
+        }
+
+        if(connectedList.size < addresses.size) {
+            mutex.withLock {
+                val connectCollectorJob = controllerScope.launch {
+                    gattEvent.onSubscription {
+                        bluetoothAdapter?.bluetoothLeScanner?.startScan(
+                            listOf(),
+                            settings,
+                            scanCallback
+                        )
+                    }.collect { result ->
+                        if (result is GattEvent.DeviceDiscovered) {
+                            if (!connectedList.any { it.address == result.device.address } && addresses.contains(
+                                    result.device.address
+                                )) {
+                                //emit(BleConnectionState.Connecting(result.device.address))
+                                connectedList.add(
+                                    BluetoothDevice(
+                                        address = result.device.address,
+                                        device = result.device,
+                                        gatt = null
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
-            }
 
-            delay(7000)
-            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-            _isScanning.update { false }
-            connectCollectorJob.cancel()
+                delay(7000)
+                bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+                _isScanning.update { false }
+                connectCollectorJob.cancel()
+            }
         }
 
         connectedList.forEach {

@@ -108,7 +108,13 @@ class DevicesViewModel @Inject constructor(
                     // Nothing
                 }
             }
-        }.launchIn(viewModelScope)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), BleConnectionState.Nothing)
+
+        bluetoothController.boundDevices.onEach {
+            Log.d("BLE_TEST", "Received list of bound devices: $it")
+        }.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(), emptyList()
+        )
     }
 
     override fun onCleared() {

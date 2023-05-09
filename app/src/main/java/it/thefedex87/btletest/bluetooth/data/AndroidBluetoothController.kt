@@ -42,6 +42,9 @@ class AndroidBluetoothController(
 
     private val mutex = Mutex(false)
 
+    override val boundDevices: Flow<List<String>>
+        get() = TODO("Not yet implemented")
+
     override val devicesState: Flow<BleConnectionState>
         @SuppressLint("MissingPermission")
         get() = flow {
