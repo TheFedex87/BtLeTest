@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import it.thefedex87.btletest.bluetooth.domain.*
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -13,6 +14,7 @@ import javax.inject.Inject
 class DevicesViewModel @Inject constructor(
     private val bluetoothController: BluetoothController
 ) : ViewModel() {
+    private var collectBatteryJob: Job? = null
 
     private val _state = MutableStateFlow(
         DevicesUiState(
@@ -72,7 +74,7 @@ class DevicesViewModel @Inject constructor(
                     )
                     Log.d("BLE_TEST", "Res of write is: $res")
 
-                    bluetoothController.registerToCharacteristic(
+                    collectBatteryJob = bluetoothController.registerToCharacteristic(
                         address = it.address,
                         serviceId = "0000180f-0000-1000-8000-00805f9b34fb",
                         characteristicId = "00002a19-0000-1000-8000-00805f9b34fb",
@@ -108,7 +110,7 @@ class DevicesViewModel @Inject constructor(
                     // Nothing
                 }
             }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), BleConnectionState.Nothing)
+        }.launchIn(viewModelScope)
 
         bluetoothController.boundDevices.onEach {
             Log.d("BLE_TEST", "Received list of bound devices: $it")
@@ -118,6 +120,7 @@ class DevicesViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        collectBatteryJob?.cancel()
         bluetoothController.cleanup()
         super.onCleared()
     }
@@ -136,6 +139,7 @@ class DevicesViewModel @Inject constructor(
     }
 
     fun disconnect() {
+        collectBatteryJob?.cancel()
         bluetoothController.cleanup()
         _state.update {
             it.copy(
